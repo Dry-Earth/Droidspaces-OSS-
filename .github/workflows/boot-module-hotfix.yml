@@ -1,0 +1,56 @@
+name: "[hotfix] Build boot-module (dontaudit)"
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage module
+        run: |
+          set -eux
+          command -v zip >/dev/null 2>&1 || sudo apt-get update && sudo apt-get install -y zip
+          VERSION=$(grep 'DS_VERSION' src/include/droidspaces.h | awk '{print $3}' | tr -d '"')
+          echo "backend version: ${VERSION}"
+          mkdir -p stage
+          cp Android/app/src/main/assets/boot-module/post-fs-data.sh stage/
+          cp Android/app/src/main/assets/boot-module/service.sh stage/
+          cp Android/app/src/main/assets/boot-module/sepolicy.rule stage/
+          cp init/android-service/vendor/bin/droidspaces_autoboot.sh stage/
+          sed -e "s|\${version}|${VERSION}|" \
+              -e "s|\${versionCode}|72001606|" \
+              Android/app/src/main/boot-module/module.prop > stage/module.prop
+          sed -i 's|^description=.*|description=Droidspaces Daemon \& Init (dontaudit hotfix for the permissive container domain).|' stage/module.prop
+          chmod 755 stage/*.sh
+          chmod 644 stage/sepolicy.rule stage/module.prop
+          (cd stage && zip -r9 ../droidspaces-boot-module-dontaudit.zip .)
+          unzip -l droidspaces-boot-module-dontaudit.zip
+          sha256sum droidspaces-boot-module-dontaudit.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: droidspaces-boot-module-dontaudit
+          path: droidspaces-boot-module-dontaudit.zip
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: boot-module-dontaudit-${{ github.run_id }}
+          name: Droidspaces boot-module (dontaudit hotfix)
+          body: |
+            KernelSU boot-module for Droidspaces v7.2.0 with `dontaudit` rules for the
+            permissive `droidspacesd` domain, to stop the AVC audit flood that fills the
+            kernel audit backlog and hard-resets the device when the app terminal closes.
+
+            - source: https://github.com/ravindu644/Droidspaces-OSS
+            - report: https://github.com/ravindu644/Droidspaces-OSS/issues/390
+            - PR: https://github.com/ravindu644/Droidspaces-OSS/pull/391
+
+            This only changes `sepolicy.rule`; the daemon binary and app are untouched.
+          files: droidspaces-boot-module-dontaudit.zip
